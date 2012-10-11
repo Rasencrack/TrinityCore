@@ -133,13 +133,13 @@ void GameObject::AddToWorld()
             m_zoneScript->OnGameObjectCreate(this);
 
         sObjectAccessor->AddObject(this);
-        bool startOpen = (GetGoType() == GAMEOBJECT_TYPE_DOOR || GetGoType() == GAMEOBJECT_TYPE_BUTTON ? GetGOInfo()->door.startOpen : false);
+
         // The state can be changed after GameObject::Create but before GameObject::AddToWorld
-        bool toggledState = GetGOData() ? GetGOData()->go_state == GO_STATE_READY : false;
+        bool toggledState = GetGoType() == GAMEOBJECT_TYPE_CHEST ? getLootState() == GO_READY : GetGoState() == GO_STATE_READY;
         if (m_model)
             GetMap()->InsertGameObjectModel(*m_model);
 
-        EnableCollision(startOpen ^ toggledState);
+        EnableCollision(toggledState);
         WorldObject::AddToWorld();
     }
 }
@@ -217,7 +217,6 @@ bool GameObject::Create(uint32 guidlow, uint32 name_id, Map* map, uint32 phaseMa
 
     SetDisplayId(goinfo->displayId);
 
-    m_model = GameObjectModel::Create(*this);
     // GAMEOBJECT_BYTES_1, index at 0, 1, 2 and 3
     SetGoType(GameobjectTypes(goinfo->type));
     SetGoState(go_state);
@@ -293,7 +292,7 @@ void GameObject::Update(uint32 diff)
                     else if (Unit* owner = GetOwner())
                     {
                         if (owner->isInCombat())
-                            m_cooldownTime = time(NULL) + goInfo->trap.cooldown;
+                            m_cooldownTime = time(NULL) + goInfo->trap.startDelay;
                     }
                     m_lootState = GO_READY;
                     break;
@@ -417,7 +416,7 @@ void GameObject::Update(uint32 diff)
                     bool IsBattlegroundTrap = false;
                     //FIXME: this is activation radius (in different casting radius that must be selected from spell data)
                     //TODO: move activated state code (cast itself) to GO_ACTIVATED, in this place only check activating and set state
-                    float radius = (float)(goInfo->trap.radius)/2; // TODO rename radius to diameter (goInfo->trap.radius) should be (goInfo->trap.diameter)
+                    float radius = (float)(goInfo->trap.radius)/3*2; // TODO rename radius to diameter (goInfo->trap.radius) should be (goInfo->trap.diameter)
                     if (!radius)
                     {
                         if (goInfo->trap.cooldown != 3)            // cast in other case (at some triggering/linked go/etc explicit call)
@@ -854,6 +853,13 @@ bool GameObject::IsDynTransport() const
     return gInfo->type == GAMEOBJECT_TYPE_MO_TRANSPORT || (gInfo->type == GAMEOBJECT_TYPE_TRANSPORT && !gInfo->transport.pause);
 }
 
+bool GameObject::IsDestructibleBuilding() const
+{
+    GameObjectTemplate const* gInfo = GetGOInfo();
+    if (!gInfo) return false;
+    return gInfo->type == GAMEOBJECT_TYPE_DESTRUCTIBLE_BUILDING;
+}
+
 Unit* GameObject::GetOwner() const
 {
     return ObjectAccessor::GetUnit(*this, GetOwnerGUID());
@@ -870,7 +876,7 @@ bool GameObject::IsAlwaysVisibleFor(WorldObject const* seer) const
     if (WorldObject::IsAlwaysVisibleFor(seer))
         return true;
 
-    if (IsTransport())
+    if (IsTransport() || IsDestructibleBuilding())
         return true;
 
     if (!seer)
@@ -1073,7 +1079,8 @@ void GameObject::Use(Unit* user)
         if (sScriptMgr->OnGossipHello(playerUser, this))
             return;
 
-        AI()->GossipHello(playerUser);
+        if (AI()->GossipHello(playerUser))
+            return;
     }
 
     // If cooldown data present in template
@@ -1146,8 +1153,8 @@ void GameObject::Use(Unit* user)
                 // the distance between this slot and the center of the go - imagine a 1D space
                 float relativeDistance = (info->size*itr->first)-(info->size*(info->chair.slots-1)/2.0f);
 
-                float x_i = GetPositionX() + relativeDistance * cos(orthogonalOrientation);
-                float y_i = GetPositionY() + relativeDistance * sin(orthogonalOrientation);
+                float x_i = GetPositionX() + relativeDistance * std::cos(orthogonalOrientation);
+                float y_i = GetPositionY() + relativeDistance * std::sin(orthogonalOrientation);
 
                 if (itr->second)
                 {
@@ -1411,7 +1418,8 @@ void GameObject::Use(Unit* user)
             // full amount unique participants including original summoner
             if (GetUniqueUseCount() == info->summoningRitual.reqParticipants)
             {
-                spellCaster = m_ritualOwner ? m_ritualOwner : spellCaster;
+                if (m_ritualOwner)
+                    spellCaster = m_ritualOwner;
 
                 spellId = info->summoningRitual.spellId;
 
@@ -1693,12 +1701,17 @@ bool GameObject::IsInRange(float x, float y, float z, float radius) const
     if (!info)
         return IsWithinDist3d(x, y, z, radius);
 
-    float sinA = sin(GetOrientation());
-    float cosA = cos(GetOrientation());
+    float sinA = std::sin(GetOrientation());
+    float cosA = std::cos(GetOrientation());
     float dx = x - GetPositionX();
     float dy = y - GetPositionY();
     float dz = z - GetPositionZ();
     float dist = sqrt(dx*dx + dy*dy);
+    //! Check if the distance between the 2 objects is 0, can happen if both objects are on the same position.
+    //! The code below this check wont crash if dist is 0 because 0/0 in float operations is valid, and returns infinite
+    if (G3D::fuzzyEq(dist, 0.0f))
+        return true;
+
     float sinB = dx / dist;
     float cosB = dy / dist;
     dx = dist * (cosA * cosB + sinA * sinB);
@@ -1738,17 +1751,17 @@ void GameObject::UpdateRotationFields(float rotation2 /*=0.0f*/, float rotation3
 {
     static double const atan_pow = atan(pow(2.0f, -20.0f));
 
-    double f_rot1 = sin(GetOrientation() / 2.0f);
-    double f_rot2 = cos(GetOrientation() / 2.0f);
+    double f_rot1 = std::sin(GetOrientation() / 2.0f);
+    double f_rot2 = std::cos(GetOrientation() / 2.0f);
 
     int64 i_rot1 = int64(f_rot1 / atan_pow *(f_rot2 >= 0 ? 1.0f : -1.0f));
     int64 rotation = (i_rot1 << 43 >> 43) & 0x00000000001FFFFF;
 
-    //float f_rot2 = sin(0.0f / 2.0f);
+    //float f_rot2 = std::sin(0.0f / 2.0f);
     //int64 i_rot2 = f_rot2 / atan(pow(2.0f, -20.0f));
     //rotation |= (((i_rot2 << 22) >> 32) >> 11) & 0x000003FFFFE00000;
 
-    //float f_rot3 = sin(0.0f / 2.0f);
+    //float f_rot3 = std::sin(0.0f / 2.0f);
     //int64 i_rot3 = f_rot3 / atan(pow(2.0f, -21.0f));
     //rotation |= (i_rot3 >> 42) & 0x7FFFFC0000000000;
 
@@ -1918,17 +1931,12 @@ void GameObject::SetLootState(LootState state, Unit* unit)
     sScriptMgr->OnGameObjectLootStateChanged(this, state, unit);
     if (m_model)
     {
-        // startOpen determines whether we are going to add or remove the LoS on activation
-        bool startOpen = (GetGoType() == GAMEOBJECT_TYPE_DOOR || GetGoType() == GAMEOBJECT_TYPE_BUTTON ? GetGOInfo()->door.startOpen : false);
-
+        bool collision = false;
         // Use the current go state
-        if (GetGoState() != GO_STATE_ACTIVE)
-            startOpen = !startOpen;
+        if ((GetGoState() != GO_STATE_READY && (state == GO_ACTIVATED || state == GO_JUST_DEACTIVATED)) || state == GO_READY)
+            collision = !collision;
 
-        if (state == GO_ACTIVATED || state == GO_JUST_DEACTIVATED)
-            EnableCollision(startOpen);
-        else if (state == GO_READY)
-            EnableCollision(!startOpen);
+        EnableCollision(collision);
     }
 }
 
@@ -1942,15 +1950,11 @@ void GameObject::SetGoState(GOState state)
             return;
 
         // startOpen determines whether we are going to add or remove the LoS on activation
-        bool startOpen = (GetGoType() == GAMEOBJECT_TYPE_DOOR || GetGoType() == GAMEOBJECT_TYPE_BUTTON ? GetGOInfo()->door.startOpen : false);
+        bool collision = false;
+        if (state == GO_STATE_READY)
+            collision = !collision;
 
-        if (GetGOData() && GetGOData()->go_state == GO_STATE_READY)
-            startOpen = !startOpen;
-
-        if (state == GO_STATE_ACTIVE || state == GO_STATE_ACTIVE_ALTERNATIVE)
-            EnableCollision(startOpen);
-        else if (state == GO_STATE_READY)
-            EnableCollision(!startOpen);
+        EnableCollision(collision);
     }
 }
 
@@ -1963,7 +1967,8 @@ void GameObject::SetDisplayId(uint32 displayid)
 void GameObject::SetPhaseMask(uint32 newPhaseMask, bool update)
 {
     WorldObject::SetPhaseMask(newPhaseMask, update);
-    EnableCollision(true);
+    if (m_model && m_model->isEnabled())
+        EnableCollision(true);
 }
 
 void GameObject::EnableCollision(bool enable)

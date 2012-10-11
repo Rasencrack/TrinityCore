@@ -79,6 +79,7 @@ SmartScript::SmartScript()
 {
     go = NULL;
     me = NULL;
+    trigger = NULL;
     mEventPhase = 0;
     mPathId = 0;
     mTargetStorage = new ObjectListMap();
@@ -92,6 +93,7 @@ SmartScript::SmartScript()
     meOrigGUID = 0;
     goOrigGUID = 0;
     mLastInvoker = 0;
+    mScriptType = SMART_SCRIPT_TYPE_CREATURE;
 }
 
 SmartScript::~SmartScript()
@@ -128,12 +130,10 @@ void SmartScript::ProcessEventsFor(SMART_EVENT e, Unit* unit, uint32 var0, uint3
 
         if (eventType == e/* && (!(*i).event.event_phase_mask || IsInPhase((*i).event.event_phase_mask)) && !((*i).event.event_flags & SMART_EVENT_FLAG_NOT_REPEATABLE && (*i).runOnce)*/)
         {
-            bool meets = true;
             ConditionList conds = sConditionMgr->GetConditionsForSmartEvent((*i).entryOrGuid, (*i).event_id, (*i).source_type);
             ConditionSourceInfo info = ConditionSourceInfo(unit, GetBaseObject());
-            meets = sConditionMgr->IsObjectMeetToConditions(info, conds);
 
-            if (meets)
+            if (sConditionMgr->IsObjectMeetToConditions(info, conds))
                 ProcessEvent(*i, unit, var0, var1, bvar, spell, gob);
         }
     }
@@ -1117,10 +1117,10 @@ void SmartScript::ProcessAction(SmartScriptHolder& e, Unit* unit, uint32 var0, u
         }
         case SMART_ACTION_SUMMON_CREATURE:
         {
-            float x, y, z, o;
             ObjectList* targets = GetTargets(e, unit);
             if (targets)
             {
+                float x, y, z, o;
                 for (ObjectList::const_iterator itr = targets->begin(); itr != targets->end(); ++itr)
                 {
                     (*itr)->GetPosition(x, y, z, o);
@@ -1149,10 +1149,10 @@ void SmartScript::ProcessAction(SmartScriptHolder& e, Unit* unit, uint32 var0, u
             if (!GetBaseObject())
                 break;
 
-            float x, y, z, o;
             ObjectList* targets = GetTargets(e, unit);
             if (targets)
             {
+                float x, y, z, o;
                 for (ObjectList::const_iterator itr = targets->begin(); itr != targets->end(); ++itr)
                 {
                     if (!IsUnit(*itr))
@@ -1947,6 +1947,27 @@ void SmartScript::ProcessAction(SmartScriptHolder& e, Unit* unit, uint32 var0, u
                 }
 
             delete targets;
+            break;
+        }
+        case SMART_ACTION_SET_HOME_POS:
+        {
+            if (!me)
+                break;
+
+            if (e.GetTargetType() == SMART_TARGET_SELF)
+                me->SetHomePosition(me->GetPositionX(), me->GetPositionY(), me->GetPositionZ(), me->GetOrientation());
+            else if (e.GetTargetType() == SMART_TARGET_POSITION)
+                me->SetHomePosition(e.target.x, e.target.y, e.target.z, e.target.o);
+            else
+                sLog->outError(LOG_FILTER_SQL, "SmartScript: Action target for SMART_ACTION_SET_HOME_POS is not using SMART_TARGET_SELF or SMART_TARGET_POSITION, skipping");
+
+           break;
+        }
+        case SMART_ACTION_SET_HEALTH_REGEN:
+        {
+            if (!me || me->GetTypeId() != TYPEID_UNIT)
+                break;
+            me->setRegeneratingHealth(e.action.setHealthRegen.regenHealth ? true : false);
             break;
         }
         default:
@@ -2800,9 +2821,11 @@ void SmartScript::InitTimer(SmartScriptHolder& e)
         case SMART_EVENT_UPDATE:
         case SMART_EVENT_UPDATE_IC:
         case SMART_EVENT_UPDATE_OOC:
-        case SMART_EVENT_OOC_LOS:
-        case SMART_EVENT_IC_LOS:
             RecalcTimer(e, e.event.minMaxRepeat.min, e.event.minMaxRepeat.max);
+            break;
+        case SMART_EVENT_IC_LOS:
+        case SMART_EVENT_OOC_LOS:
+            RecalcTimer(e, e.event.los.cooldownMin, e.event.los.cooldownMax);
             break;
         default:
             e.active = true;

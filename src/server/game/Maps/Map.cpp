@@ -711,7 +711,7 @@ void Map::PlayerRelocation(Player* player, float x, float y, float z, float orie
 
     player->Relocate(x, y, z, orientation);
     if (player->IsVehicle())
-        player->GetVehicleKit()->RelocatePassengers(x, y, z, orientation);
+        player->GetVehicleKit()->RelocatePassengers();
 
     if (old_cell.DiffGrid(new_cell) || old_cell.DiffCell(new_cell))
     {
@@ -757,7 +757,7 @@ void Map::CreatureRelocation(Creature* creature, float x, float y, float z, floa
     {
         creature->Relocate(x, y, z, ang);
         if (creature->IsVehicle())
-            creature->GetVehicleKit()->RelocatePassengers(x, y, z, ang);
+            creature->GetVehicleKit()->RelocatePassengers();
         creature->UpdateObjectVisibility(false);
         RemoveCreatureFromMoveList(creature);
     }
@@ -1223,8 +1223,8 @@ bool GridMap::loadLiquidData(FILE* in, uint32 offset, uint32 /*size*/)
     }
     if (!(header.flags & MAP_LIQUID_NO_HEIGHT))
     {
-        _liquidMap = new float[_liquidWidth*_liquidHeight];
-        if (fread(_liquidMap, sizeof(float), _liquidWidth*_liquidHeight, in) != _liquidWidth*_liquidHeight)
+        _liquidMap = new float[uint32(_liquidWidth) * uint32(_liquidHeight)];
+        if (fread(_liquidMap, sizeof(float), _liquidWidth*_liquidHeight, in) != (uint32(_liquidWidth) * uint32(_liquidHeight)))
             return false;
     }
     return true;
@@ -2415,7 +2415,7 @@ bool InstanceMap::AddPlayerToMap(Player* player)
                 {
                     // solo saves should be reset when entering a group
                     InstanceGroupBind* groupBind = group->GetBoundInstance(this);
-                    if (playerBind)
+                    if (playerBind && playerBind->save != mapSave)
                     {
                         sLog->outError(LOG_FILTER_MAPS, "InstanceMap::Add: player %s(%d) is being put into instance %d, %d, %d, %d, %d, %d but he is in group %d and is bound to instance %d, %d, %d, %d, %d, %d!", player->GetName(), player->GetGUIDLow(), mapSave->GetMapId(), mapSave->GetInstanceId(), mapSave->GetDifficulty(), mapSave->GetPlayerCount(), mapSave->GetGroupCount(), mapSave->CanReset(), GUID_LOPART(group->GetLeaderGUID()), playerBind->save->GetMapId(), playerBind->save->GetInstanceId(), playerBind->save->GetDifficulty(), playerBind->save->GetPlayerCount(), playerBind->save->GetGroupCount(), playerBind->save->CanReset());
                         if (groupBind)
@@ -2688,7 +2688,7 @@ uint32 InstanceMap::GetMaxResetDelay() const
 /* ******* Battleground Instance Maps ******* */
 
 BattlegroundMap::BattlegroundMap(uint32 id, time_t expiry, uint32 InstanceId, Map* _parent, uint8 spawnMode)
-  : Map(id, expiry, InstanceId, spawnMode, _parent)
+  : Map(id, expiry, InstanceId, spawnMode, _parent), m_bg(NULL)
 {
     //lets initialize visibility distance for BG/Arenas
     BattlegroundMap::InitVisibilityDistance();

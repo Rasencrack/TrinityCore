@@ -52,6 +52,7 @@
 #include "Group.h"
 #include "AccountMgr.h"
 #include "Spell.h"
+#include "BattlegroundMgr.h"
 #include "Battlefield.h"
 #include "BattlefieldMgr.h"
 
@@ -861,8 +862,8 @@ void WorldSession::HandleAreaTriggerOpcode(WorldPacket& recv_data)
 
         // 2PI = 360°, keep in mind that ingame orientation is counter-clockwise
         double rotation = 2 * M_PI - atEntry->box_orientation;
-        double sinVal = sin(rotation);
-        double cosVal = cos(rotation);
+        double sinVal = std::sin(rotation);
+        double cosVal = std::cos(rotation);
 
         float playerBoxDistX = player->GetPositionX() - atEntry->x;
         float playerBoxDistY = player->GetPositionY() - atEntry->y;
@@ -1661,7 +1662,7 @@ void WorldSession::HandleQueryInspectAchievements(WorldPacket & recv_data)
     if (!player)
         return;
 
-    player->GetAchievementMgr().SendRespondInspectAchievements(_player);
+    player->SendRespondInspectAchievements(_player);
 }
 
 void WorldSession::HandleWorldStateUITimerUpdate(WorldPacket& /*recv_data*/)
@@ -1688,13 +1689,59 @@ void WorldSession::SendSetPhaseShift(uint32 PhaseShift)
     data << uint32(PhaseShift);
     SendPacket(&data);
 }
+// Battlefield and Battleground
+void WorldSession::HandleAreaSpiritHealerQueryOpcode(WorldPacket & recv_data)
+{
+    sLog->outDebug(LOG_FILTER_NETWORKIO, "WORLD: CMSG_AREA_SPIRIT_HEALER_QUERY");
+
+    Battleground* bg = _player->GetBattleground();
+
+    uint64 guid;
+    recv_data >> guid;
+
+    Creature* unit = GetPlayer()->GetMap()->GetCreature(guid);
+    if (!unit)
+        return;
+
+    if (!unit->isSpiritService())                            // it's not spirit service
+        return;
+
+    if (bg)
+        sBattlegroundMgr->SendAreaSpiritHealerQueryOpcode(_player, bg, guid);
+
+    if (Battlefield* bf = sBattlefieldMgr->GetBattlefieldToZoneId(_player->GetZoneId()))
+        bf->SendAreaSpiritHealerQueryOpcode(_player,guid);
+}
+
+void WorldSession::HandleAreaSpiritHealerQueueOpcode(WorldPacket & recv_data)
+{
+    sLog->outDebug(LOG_FILTER_NETWORKIO, "WORLD: CMSG_AREA_SPIRIT_HEALER_QUEUE");
+
+    Battleground* bg = _player->GetBattleground();
+
+    uint64 guid;
+    recv_data >> guid;
+
+    Creature* unit = GetPlayer()->GetMap()->GetCreature(guid);
+    if (!unit)
+        return;
+
+    if (!unit->isSpiritService())                            // it's not spirit service
+        return;
+
+    if (bg)
+        bg->AddPlayerToResurrectQueue(guid, _player->GetGUID());
+
+    if (Battlefield* bf = sBattlefieldMgr->GetBattlefieldToZoneId(_player->GetZoneId()))
+        bf->AddPlayerToResurrectQueue(guid, _player->GetGUID());
+}
 
 void WorldSession::HandleHearthAndResurrect(WorldPacket& /*recv_data*/)
 {
     if (_player->isInFlight())
         return;
 
-    if(Battlefield* bf = sBattlefieldMgr->GetBattlefieldToZoneId(_player->GetZoneId()))
+    if (/*Battlefield* bf = */sBattlefieldMgr->GetBattlefieldToZoneId(_player->GetZoneId()))
     {
         // bf->PlayerAskToLeave(_player); FIXME
         return;

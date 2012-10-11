@@ -632,6 +632,7 @@ class GameObject : public WorldObject, public GridObject<GameObject>
 
         bool IsTransport() const;
         bool IsDynTransport() const;
+        bool IsDestructibleBuilding() const;
 
         uint32 GetDBTableGUIDLow() const { return m_DBTableGuid; }
 
@@ -801,6 +802,7 @@ class GameObject : public WorldObject, public GridObject<GameObject>
 
         std::string GetAIName() const;
         void SetDisplayId(uint32 displayid);
+        uint32 GetDisplayId() const { return GetUInt32Value(GAMEOBJECT_DISPLAYID); }
 
         GameObjectModel * m_model;
     protected:

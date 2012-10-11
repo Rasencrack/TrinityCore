@@ -25,19 +25,22 @@
 #include "SpellAuras.h"
 #include "Vehicle.h"
 
-enum WintergrastData
-{
-    BATTLEFIELD_WG_ZONEID                        = 4197,             // Wintergrasp
-    BATTLEFIELD_WG_MAPID                         = 571,              // Northrend
-};
-
 enum WGVehicles
 {
     NPC_WG_SEIGE_ENGINE_ALLIANCE        = 28312,
     NPC_WG_SEIGE_ENGINE_HORDE           = 32627,
     NPC_WG_DEMOLISHER                   = 28094,
-    NPC_WG_CATAPULT                     = 27881,
+    NPC_WG_CATAPULT                     = 27881
 };
+
+BattlefieldWG::~BattlefieldWG()
+{
+    for (Workshop::const_iterator itr = WorkshopsList.begin(); itr != WorkshopsList.end(); ++itr)
+        delete *itr;
+
+    for (GameObjectBuilding::const_iterator itr = BuildingsInZone.begin(); itr != BuildingsInZone.end(); ++itr)
+        delete *itr;
+}
 
 bool BattlefieldWG::SetupBattlefield()
 {
@@ -172,6 +175,8 @@ bool BattlefieldWG::SetupBattlefield()
         GameObject* go = SpawnGameObject(WGGameObjectBuilding[i].entry, WGGameObjectBuilding[i].x, WGGameObjectBuilding[i].y, WGGameObjectBuilding[i].z, WGGameObjectBuilding[i].o);
         BfWGGameObjectBuilding* b = new BfWGGameObjectBuilding(this);
         b->Init(go, WGGameObjectBuilding[i].type, WGGameObjectBuilding[i].WorldState, WGGameObjectBuilding[i].nameId);
+        if (!IsEnabled() && go->GetEntry() == GO_WINTERGRASP_VAULT_GATE)
+            go->SetDestructibleState(GO_DESTRUCTIBLE_DESTROYED);
         BuildingsInZone.insert(b);
     }
 
@@ -454,7 +459,7 @@ void BattlefieldWG::DoCompleteOrIncrementAchievement(uint32 achievement, Player*
     {
         case ACHIEVEMENTS_WIN_WG_100:
         {
-            // player->GetAchievementMgr().UpdateAchievementCriteria();
+            // player->UpdateAchievementCriteria();
         }
         default:
         {
@@ -523,13 +528,13 @@ void BattlefieldWG::OnCreatureCreate(Creature* creature)
             case NPC_WINTERGRASP_CATAPULT:
             case NPC_WINTERGRASP_DEMOLISHER:
             {
-                if (!creature->GetCreatorGUID() || !sObjectAccessor->FindPlayer(creature->GetCreatorGUID()))
+                if (!creature->ToTempSummon() || !creature->ToTempSummon()->GetSummonerGUID() || !sObjectAccessor->FindPlayer(creature->ToTempSummon()->GetSummonerGUID()))
                 {
-                    creature->setDeathState(DEAD);
-                    creature->RemoveFromWorld();
+                    creature->DespawnOrUnsummon();
                     return;
                 }
-                Player* creator = sObjectAccessor->FindPlayer(creature->GetCreatorGUID());
+
+                Player* creator = sObjectAccessor->FindPlayer(creature->ToTempSummon()->GetSummonerGUID());
                 TeamId team = creator->GetTeamId();
 
                 if (team == TEAM_HORDE)
@@ -538,14 +543,12 @@ void BattlefieldWG::OnCreatureCreate(Creature* creature)
                     {
                         UpdateData(BATTLEFIELD_WG_DATA_VEHICLE_H, 1);
                         creature->AddAura(SPELL_HORDE_FLAG, creature);
-                        creature->setFaction(creator->getFaction());
                         m_vehicles[team].insert(creature->GetGUID());
                         UpdateVehicleCountWG();
                     }
                     else
                     {
-                        creature->setDeathState(DEAD);
-                        creature->RemoveFromWorld();
+                        creature->DespawnOrUnsummon();
                         return;
                     }
                 }
@@ -554,15 +557,13 @@ void BattlefieldWG::OnCreatureCreate(Creature* creature)
                     if (GetData(BATTLEFIELD_WG_DATA_VEHICLE_A) < GetData(BATTLEFIELD_WG_DATA_MAX_VEHICLE_A))
                     {
                         UpdateData(BATTLEFIELD_WG_DATA_VEHICLE_A, 1);
-                        creature->AddAura(SPELL_ALLIANCE_FLAG,creature);
-                        creature->setFaction(creator->getFaction());
+                        creature->AddAura(SPELL_ALLIANCE_FLAG, creature);
                         m_vehicles[team].insert(creature->GetGUID());
                         UpdateVehicleCountWG();
                     }
                     else
                     {
-                        creature->setDeathState(DEAD);
-                        creature->RemoveFromWorld();
+                        creature->DespawnOrUnsummon();
                         return;
                     }
                 }
@@ -609,32 +610,25 @@ void BattlefieldWG::OnCreatureRemove(Creature* /*creature*/)
 
 void BattlefieldWG::OnGameObjectCreate(GameObject* go)
 {
-    bool isWorkshop = false;
     uint8 workshopId = 0;
 
     switch (go->GetEntry())
     {
         case GO_WINTERGRASP_FACTORY_BANNER_NE:
-            isWorkshop = true;
             workshopId = BATTLEFIELD_WG_WORKSHOP_NE;
             break;
         case GO_WINTERGRASP_FACTORY_BANNER_NW:
-            isWorkshop = true;
             workshopId = BATTLEFIELD_WG_WORKSHOP_NW;
             break;
         case GO_WINTERGRASP_FACTORY_BANNER_SE:
-            isWorkshop = true;
             workshopId = BATTLEFIELD_WG_WORKSHOP_SE;
             break;
         case GO_WINTERGRASP_FACTORY_BANNER_SW:
-            isWorkshop = true;
             workshopId = BATTLEFIELD_WG_WORKSHOP_SW;
             break;
-
+        default:
+            return;
     }
-
-    if (!isWorkshop)
-        return;
 
     for (Workshop::const_iterator itr = WorkshopsList.begin(); itr != WorkshopsList.end(); ++itr)
     {
@@ -699,10 +693,10 @@ bool BattlefieldWG::FindAndRemoveVehicleFromList(Unit* vehicle)
         if (m_vehicles[itr].find(vehicle->GetGUID()) != m_vehicles[itr].end())
         {
             m_vehicles[itr].erase(vehicle->GetGUID());
-            if (itr == WintergraspFaction[TEAM_HORDE])
-                UpdateData(BATTLEFIELD_WG_DATA_VEHICLE_H,-1);
+            if (itr == TEAM_HORDE)
+                UpdateData(BATTLEFIELD_WG_DATA_VEHICLE_H, -1);
             else
-                UpdateData(BATTLEFIELD_WG_DATA_VEHICLE_A,-1);
+                UpdateData(BATTLEFIELD_WG_DATA_VEHICLE_A, -1);
             return true;
         }
     }
@@ -848,20 +842,13 @@ uint32 BattlefieldWG::GetData(uint32 data)
     return Battlefield::GetData(data);
 }
 
-// Method sending worldsate to player
-WorldPacket BattlefieldWG::BuildInitWorldStates()
+
+void BattlefieldWG::FillInitialWorldStates(WorldPacket& data)
 {
-    WorldPacket data(SMSG_INIT_WORLD_STATES, (4 + 4 + 4 + 2 + (BuildingsInZone.size() * 8) + (WorkshopsList.size() * 8)));
-
-    data << uint32(m_MapId);
-    data << uint32(m_ZoneId);
-    data << uint32(0);
-    data << uint16(4 + 2 + 4 + BuildingsInZone.size() + WorkshopsList.size());
-
     data << uint32(BATTLEFIELD_WG_WORLD_STATE_ATTACKER) << uint32(GetAttackerTeam());
     data << uint32(BATTLEFIELD_WG_WORLD_STATE_DEFENDER) << uint32(GetDefenderTeam());
-    data << uint32(BATTLEFIELD_WG_WORLD_STATE_ACTIVE) << uint32(IsWarTime()? 0 : 1); // Note: cleanup these two, their names look awkward
-    data << uint32(BATTLEFIELD_WG_WORLD_STATE_SHOW_WORLDSTATE) << uint32(IsWarTime()? 1 : 0);
+    data << uint32(BATTLEFIELD_WG_WORLD_STATE_ACTIVE) << uint32(IsWarTime() ? 0 : 1); // Note: cleanup these two, their names look awkward
+    data << uint32(BATTLEFIELD_WG_WORLD_STATE_SHOW_WORLDSTATE) << uint32(IsWarTime() ? 1 : 0);
 
     for (uint32 i = 0; i < 2; ++i)
         data << ClockWorldState[i] << uint32(time(NULL) + (m_Timer / 1000));
@@ -877,23 +864,28 @@ WorldPacket BattlefieldWG::BuildInitWorldStates()
     for (Workshop::const_iterator itr = WorkshopsList.begin(); itr != WorkshopsList.end(); ++itr)
         if (*itr)
             data << WorkshopsData[(*itr)->workshopId].worldstate << (*itr)->state;
-
-    return data;
 }
 
 void BattlefieldWG::SendInitWorldStatesTo(Player* player)
 {
-    WorldPacket data = BuildInitWorldStates();
+    WorldPacket data(SMSG_INIT_WORLD_STATES, (4 + 4 + 4 + 2 + (BuildingsInZone.size() * 8) + (WorkshopsList.size() * 8)));
+
+    data << uint32(m_MapId);
+    data << uint32(m_ZoneId);
+    data << uint32(0);
+    data << uint16(10 + BuildingsInZone.size() + WorkshopsList.size()); // Number of fields
+
+    FillInitialWorldStates(data);
+
     player->GetSession()->SendPacket(&data);
 }
 
 void BattlefieldWG::SendInitWorldStatesToAll()
 {
-    WorldPacket data = BuildInitWorldStates();
     for (uint8 team = 0; team < 2; team++)
         for (GuidSet::iterator itr = m_players[team].begin(); itr != m_players[team].end(); ++itr)
             if (Player* player = sObjectAccessor->FindPlayer(*itr))
-                player->GetSession()->SendPacket(&data);
+                SendInitWorldStatesTo(player);
 }
 
 void BattlefieldWG::BrokenWallOrTower(TeamId /*team*/)
@@ -1084,10 +1076,12 @@ WintergraspCapturePoint::WintergraspCapturePoint(BattlefieldWG* battlefield, Tea
 {
     m_Bf = battlefield;
     m_team = teamInControl;
+    m_Workshop = NULL;
 }
 
 void WintergraspCapturePoint::ChangeTeam(TeamId /*oldTeam*/)
 {
+    ASSERT(m_Workshop);
     m_Workshop->GiveControlTo(m_team, false);
 }
 

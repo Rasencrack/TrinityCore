@@ -450,10 +450,10 @@ void WorldSession::HandleLootRoll(WorldPacket& recvData)
     switch (rollType)
     {
         case ROLL_NEED:
-            GetPlayer()->GetAchievementMgr().UpdateAchievementCriteria(ACHIEVEMENT_CRITERIA_TYPE_ROLL_NEED, 1);
+            GetPlayer()->UpdateAchievementCriteria(ACHIEVEMENT_CRITERIA_TYPE_ROLL_NEED, 1);
             break;
         case ROLL_GREED:
-            GetPlayer()->GetAchievementMgr().UpdateAchievementCriteria(ACHIEVEMENT_CRITERIA_TYPE_ROLL_GREED, 1);
+            GetPlayer()->UpdateAchievementCriteria(ACHIEVEMENT_CRITERIA_TYPE_ROLL_GREED, 1);
             break;
     }
 }
@@ -859,7 +859,7 @@ void WorldSession::BuildPartyMemberStatsChangedPacket(Player* player, WorldPacke
             {
                 if (auramask & (uint64(1) << i))
                 {
-                    AuraApplication const* aurApp = player->GetVisibleAura(i);
+                    AuraApplication const* aurApp = pet->GetVisibleAura(i);
                     *data << uint32(aurApp ? aurApp->GetBase()->GetId() : 0);
                     *data << uint8(1);
                 }
